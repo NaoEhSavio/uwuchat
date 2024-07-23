@@ -5,6 +5,8 @@ import lib from "./lib.js"
 
 const port: number = Number(process.argv[2] || "7171")
 
+const TICK_RATE = 1000 / 10;
+
 // Globals
 // =======
 
@@ -12,13 +14,19 @@ interface RoomPosts {
   [room: string]: Uint8Array[]
 }
 
+interface RoomTicks {
+  [room: string]: number;
+}
+
 interface Watchlist {
   [room: string]: ws[]
 }
 
 var RoomPosts: RoomPosts = {}
+var RoomTicks: RoomTicks = {}
 var Watchlist: Watchlist = {}
 var Connected = 0
+var tickNumber = 0;
 
 // Startup
 // =======
@@ -49,6 +57,38 @@ for (let file of files) {
 // Methods
 // =======
 
+// 
+function broadcastTick(room: string) {
+  const tickEventType = 2;
+  tickNumber++;
+  const data = { type: tickEventType, timestamp: Date.now(), tick: tickNumber };
+  const postRoom = lib.u64_to_hex(Number(room))
+  const postUser = lib.u64_to_hex(0)
+  const postData = lib.json_to_hex(data)
+ 
+  // do not broadcast tick for empty room
+  var watchlist = Watchlist[room]
+  if (watchlist.length === 0) {
+    return;
+  }
+  
+  if (!RoomTicks[room]) {
+    RoomTicks[room] = 0;
+  }
+  
+  RoomTicks[room]++;
+  
+  save_post(postRoom, postUser, postData);
+}
+
+function startTickBroadcast() {
+  setInterval(() => {
+    for (let room in Watchlist) {
+      broadcastTick(room);
+    }
+  }, TICK_RATE);
+}
+
 // Returns current time
 function get_time() {
   return Date.now()
@@ -59,6 +99,10 @@ function watch_room(room_name: string, wsRecevier: ws) {
   // Creates watcher list
   if (!Watchlist[room_name]) {
     Watchlist[room_name] = []
+  }
+
+  if (!RoomTicks[room_name]) {
+    RoomTicks[room_name] = 0;
   }
 
   // Gets watcher list
@@ -96,6 +140,10 @@ function unwatch_room(room_name: string, wsRecevier: ws) {
       return
     }
   }
+
+  if (Watchlist[room_name] && Watchlist[room_name].length === 0) {
+    delete RoomTicks[room_name];
+  }
 }
 
 // Saves a post (room id, user address, data)
@@ -118,6 +166,7 @@ function save_post(post_room: string | null, post_user: string | null, post_data
   var post_seri = lib.hexs_to_bytes([lib.u32_to_hex(post_buff.length - 1)].concat(post_list))
   var post_file = path.join("data", valid_post_room + ".room")
 
+  console.log(valid_post_data);
   var log_msg = ""
 
   log_msg += "Saving post!\n"
@@ -158,6 +207,7 @@ function save_post(post_room: string | null, post_user: string | null, post_data
 // =======
 
 const wsServer = new ws.Server({ port })
+startTickBroadcast();
 
 // wss.binaryType = "arraybuffer"
 
